@@ -30,8 +30,11 @@
  * code as ppu:func_<guest address>), the system libraries through dladdr.
  */
 #ifdef __APPLE__
+#include <TargetConditionals.h>
 #include <mach/mach.h>
-#include <mach/mach_vm.h>
+#if !TARGET_OS_IPHONE
+#include <mach/mach_vm.h>   /* "unsupported" in the iOS SDK; vm_read_overwrite there */
+#endif
 #include <mach/thread_status.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
@@ -220,8 +223,13 @@ static bool read64(const Thr& t, uint64_t at, uint64_t* out)
         *out = *(const uint64_t*)at;
         return true;
     }
+#if TARGET_OS_IPHONE
+    vm_size_t got = 0;   /* 64-bit on arm64: the same call under its older name */
+    return vm_read_overwrite(mach_task_self(), (vm_address_t)at, 8, (vm_address_t)out, &got) == KERN_SUCCESS && got == 8;
+#else
     mach_vm_size_t got = 0;
     return mach_vm_read_overwrite(mach_task_self(), at, 8, (mach_vm_address_t)out, &got) == KERN_SUCCESS && got == 8;
+#endif
 }
 
 /* One thread's stack: frames written to out (pc first), the link register in

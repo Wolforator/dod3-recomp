@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The iOS app's Info.plist (CMakeLists.txt, MACOSX_BUNDLE_INFO_PLIST). -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleExecutable</key><string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+    <key>CFBundleIdentifier</key><string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+    <key>CFBundleDisplayName</key><string>Drakengard 3</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
+    <key>CFBundleVersion</key><string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+    <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
+    <key>LSRequiresIPhoneOS</key><true/>
+    <key>MinimumOSVersion</key><string>17.0</string>
+    <key>UIDeviceFamily</key><array><integer>1</integer></array>
+    <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string><string>metal</string></array>
+    <key>UILaunchScreen</key><dict/>
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key><false/>
+    </dict>
+    <!-- Documents in the Files app: the game is copied in there -->
+    <key>UIFileSharingEnabled</key><true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key><true/>
+    <!-- landscape, full screen -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+    </array>
+    <key>UIRequiresFullScreen</key><true/>
+    <key>UIStatusBarHidden</key><true/>
+    <key>UIViewControllerBasedStatusBarAppearance</key><false/>
+    <key>GCSupportsControllerUserInteraction</key><true/>
+    <key>GCSupportedGameControllers</key>
+    <array>
+        <dict><key>ProfileName</key><string>ExtendedGamepad</string></dict>
+    </array>
+    <key>UIBackgroundModes</key><array/>
+</dict>
+</plist>

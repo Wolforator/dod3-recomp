@@ -19,6 +19,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 else()
     set(DOD3_LINUX OFF)
 endif()
+# iOS (iPhone, arm64): configured with -DCMAKE_SYSTEM_NAME=iOS (tools/ios/).
+# CMake sets APPLE there too, so every macOS-only branch below reads
+# APPLE AND NOT DOD3_IOS. No installer, launcher or AppKit: the game's files
+# are copied into the app's Documents folder (src/os/ios/).
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(DOD3_IOS ON)
+else()
+    set(DOD3_IOS OFF)
+endif()
 
 # ---------------------------------------------------------------------------
 # Standards
@@ -273,6 +282,13 @@ set_source_files_properties("${LIBSRE_LIFTED_CPP}" PROPERTIES COMPILE_OPTIONS "-
 if(WIN32)
     list(APPEND PORT_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/os/win32/prof.cpp"
                                  "${CMAKE_CURRENT_SOURCE_DIR}/src/os/win32/setup_win.cpp")
+elseif(DOD3_IOS)
+    # The data folder (the app's Documents), the log file and the app's
+    # start: the counterpart of os/macos/setup_mac.mm.
+    list(APPEND PORT_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/os/ios/setup_ios.mm"
+                                 "${CMAKE_CURRENT_SOURCE_DIR}/src/os/macos/prof_mac.cpp")
+    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/os/ios/setup_ios.mm"
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 elseif(APPLE)
     # What main.cpp needs from AppKit (the data folder, the log file, Option
     # held at launch) and the setup's alert: the counterpart of os/win32/setup_win.cpp.
@@ -317,6 +333,9 @@ if(WIN32)
         # the launcher's updates from GitHub (WinHTTP; the Mac's app is replaced another way)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/install/update.cpp"
         ${IMGUI_SOURCES})
+elseif(DOD3_IOS)
+    # No installer pages or launcher on iOS: only the installer's core above
+    # (main.cpp asks it whether the game is in place).
 elseif(APPLE)
     # The Mac's window layer (src/ui/ui_mac.mm): a window with a Metal
     # view, ImGui's OSX and Metal backends (Objective-C++, ARC).
@@ -371,7 +390,7 @@ set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/install/pkg.cpp" APPEND PRO
 set_property(SOURCE ${SETUP_SOURCES} APPEND PROPERTY INCLUDE_DIRECTORIES "${IMGUI_DIR}")
 # third-party code: its warnings are not ours to act on
 set_property(SOURCE ${IMGUI_SOURCES} APPEND PROPERTY COMPILE_OPTIONS "-w")
-if(WIN32 OR APPLE OR DOD3_LINUX)
+if(WIN32 OR (APPLE AND NOT DOD3_IOS) OR DOD3_LINUX)
     # the key art's PNG decoder: stb_image, the copy in the runtime's codec
     # library, compiled privately (src/ui/png.cpp)
     set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/png.cpp" APPEND PROPERTY
@@ -562,7 +581,22 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 )
 # The installer's window on the Mac (src/ui/ui_mac.mm): MetalKit's view,
 # pads for ImGui through GameController, file types for the open panels.
-if(APPLE)
+if(DOD3_IOS)
+    # UIKit for the app, AVFoundation for the audio session, GameController
+    # for the pads (SDL2's static library brings the rest of its own).
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        "-framework UIKit" "-framework AVFoundation" "-framework GameController")
+    # An app bundle: Info.plist from src/os/ios, unsigned (LiveContainer or
+    # the sideloading tool signs it; tools/ios/package_ipa.sh zips it).
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/src/os/ios/Info.plist.in"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.dod3recomp.ios"
+        MACOSX_BUNDLE_BUNDLE_NAME "DOD3"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        OUTPUT_NAME "dod3")
+elseif(APPLE)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         "-framework MetalKit" "-framework GameController" "-framework UniformTypeIdentifiers")
 endif()
@@ -787,4 +821,8 @@ set_property(SOURCE ${RECOMP_SOURCES} APPEND PROPERTY INCLUDE_DIRECTORIES "${PS3
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
-install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
+if(DOD3_IOS)
+    install(TARGETS ${PROJECT_NAME} BUNDLE DESTINATION .)   # the .app (tools/ios/package_ipa.sh packs it)
+else()
+    install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
+endif()
