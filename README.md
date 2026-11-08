@@ -32,6 +32,7 @@
 
 - [About](#about)
 - [Installing](#installing)
+- [iOS (experimental)](#ios-experimental)
 - [Building](#building)
 - [Status](#status)
 - [How it fits together](#how-it-fits-together)
@@ -132,6 +133,23 @@ launcher's Settings, in the game's own Settings menu (Graphics Settings,
 System Settings, Advanced Graphics and Picture Settings), or in `dod3.ini`.
 [docs/PLAYING.md](docs/PLAYING.md) has the controls, the saves, the Japanese
 voices, and what to do if something goes wrong.
+
+## iOS (experimental)
+
+An iPhone build of the port, installed through
+[LiveContainer](https://github.com/LiveContainer/LiveContainer) or another
+sideloading tool. It uses the same recompiled code and the Metal renderer as
+the Mac build. It adds on-screen touch controls, and a controller works too.
+It has been tested on an iPhone 17 Pro Max running iOS 27.2. There is no
+prebuilt download: you build the `.ipa` yourself on a Mac.
+[tools/ios/README.md](tools/ios/README.md) covers building it, copying the
+game onto the phone, and the phone-specific behaviour.
+
+**You need your own copies of the game and the PS3 firmware.** That means
+Drakengard 3 (BLUS31197, or the PSN release NPUB31251) with its 1.01 update,
+and the firmware the build takes `libsre.prx` from. Neither is in this
+repository, and the app contains none of it. You copy your installed game into
+the app's folder on the phone yourself.
 
 ## Building
 
