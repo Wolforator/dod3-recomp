@@ -673,6 +673,12 @@ static void apply_unfocused(void)
 {
     const char* e = getenv("DOD3_UNFOCUSED");
     s_unfocused = (!e || !*e) ? 0 : !strcmp(e, "mute") ? 1 : !strcmp(e, "pause") ? 2 : 0;
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    /* iOS: out of focus is the app leaving the screen, and an app in the
+     * background must not use the GPU (iOS ends it for that): always paused,
+     * the sound stopped with it, whatever the setting. */
+    s_unfocused = 2;
+#endif
 }
 void dod3_unfocused_reload() { apply_unfocused(); }
 extern "C" volatile int g_audio_hold;                 /* cellAudio.c: 1 mute, 2 pause */
@@ -708,6 +714,14 @@ static bool window_focused(void)
 #endif
 }
 
+/* What unfocused_hold last decided: 0 running, 1 muted, 2 paused. */
+static std::atomic<int> s_hold_now{ 0 };
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+/* src/os/ios/setup_ios.mm, on the way to the background: has the frame clock
+ * stopped (and with it the renderer's use of the GPU)? */
+extern "C" int dod3_ios_paused(void) { return s_hold_now.load() == 2; }
+#endif
+
 /* The frame clock asks every pass; the window is looked at 20 times a
  * second. 0 running, 1 muted, 2 paused. */
 static int unfocused_hold(uint64_t now_us)
@@ -736,6 +750,7 @@ static int unfocused_hold(uint64_t now_us)
                 : want == 1 ? "out of focus: muted"
                             : "running");
         hold = want;
+        s_hold_now = want;
     }
     return hold;
 }

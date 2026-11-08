@@ -58,7 +58,14 @@
 #include "rsx_host_mouse.h"
 #include "util.h"
 
-#if defined(_WIN32) || defined(__APPLE__) || defined(PS3RECOMP_VULKAN_ENGINE_SDL)
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
+/* Not on iOS: the app reads no keyboard or mouse (the Metal backend's key
+ * state is the macOS window's), and an installed keyboard makes port 0 "the
+ * keyboard" to the button prompts until a pad is touched. */
+#if (defined(_WIN32) || defined(__APPLE__) || defined(PS3RECOMP_VULKAN_ENGINE_SDL)) && \
+    !(defined(__APPLE__) && TARGET_OS_IPHONE)
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN

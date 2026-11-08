@@ -20,7 +20,9 @@
 #import <UIKit/UIKit.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <string.h>
 #include <string>
+#include <atomic>
 #include <thread>
 #include <unistd.h>
 
@@ -28,6 +30,7 @@ extern "C" {
 void rsx_metal_backend_ios_attach(void* layer);      /* ps3recomp: rsx_metal_backend.m */
 void rsx_metal_backend_ios_set_active(int active);
 void SDL_SetMainReady(void);                         /* SDL2: no SDL_main here */
+int dod3_ios_paused(void);                           /* main.cpp: the frame clock has stopped */
 }
 
 /* The data folder: the app's Documents (created by the system). */
@@ -59,6 +62,32 @@ extern "C" const char* dod3_mac_resources_dir(void)
     return dir.c_str();
 }
 
+/* The diagnostic build (tools/ios/package_ipa.sh --diag): the same app with
+ * defaults/diag.env in the bundle, KEY=VALUE lines set in the environment
+ * before the game's main, so they win over dod3.ini. What it set is said at
+ * the top of the log. The everyday .ipa has no such file. */
+static std::string s_diag_said;
+
+static void apply_diag_env(void)
+{
+    @autoreleasepool {
+        NSString* p = [NSBundle.mainBundle pathForResource:@"diag" ofType:@"env" inDirectory:@"defaults"];
+        if (!p) return;
+        FILE* f = fopen(p.fileSystemRepresentation, "r");
+        if (!f) return;
+        char line[512];
+        while (fgets(line, sizeof line, f)) {
+            line[strcspn(line, "\r\n")] = 0;
+            char* eq = strchr(line, '=');
+            if (line[0] == '#' || !eq || eq == line) continue;
+            *eq = 0;
+            setenv(line, eq + 1, 1);
+            s_diag_said += (s_diag_said.empty() ? "" : ", ") + std::string(line) + "=" + (eq + 1);
+        }
+        fclose(f);
+    }
+}
+
 /* The log goes to Documents/dod3.log (the current directory by now), the
  * run before kept as dod3.prev.log; flushed every 200 ms, as on the Mac. */
 extern "C" void dod3_mac_log_to_file(void)
@@ -68,6 +97,8 @@ extern "C" void dod3_mac_log_to_file(void)
     if (FILE* f = fopen("dod3.log", "w")) fclose(f);
     if (freopen("dod3.log", "a", stderr)) setvbuf(stderr, buf, _IOFBF, sizeof buf);
     freopen("dod3.log", "a", stdout);
+    if (!s_diag_said.empty())
+        fprintf(stderr, "[ios] DIAGNOSTIC BUILD: set before dod3.ini, over it: %s\n", s_diag_said.c_str());
     std::thread([] {
         pthread_setname_np("log flush");
         for (;;) { usleep(200 * 1000); fflush(stderr); fflush(stdout); }
@@ -109,6 +140,7 @@ extern "C" int dod3_setup_mac(const char* base_dir, int force)
  * game is in Documents, else a screen that says what to copy where. */
 
 static int (*s_game_main)(int, char**);
+static std::atomic<bool> s_game_running;   /* the game's thread is started */
 static int s_argc;
 static char** s_argv;
 
@@ -166,6 +198,7 @@ static bool game_ready(void)
     [_help removeFromSuperview];
     _help = nil;
     _started = YES;
+    s_game_running = true;
     [self.view layoutIfNeeded];
     rsx_metal_backend_ios_attach((__bridge void*)self.view.layer);
     pthread_attr_t a;
@@ -243,9 +276,22 @@ static bool game_ready(void)
     self.window = w;
     UIApplication.sharedApplication.idleTimerDisabled = YES;   /* no auto-lock in play */
 }
-/* in front or not: the game's "window focus" (dod3.ini's unfocused setting) */
+/* In front or not: the game's "window focus". Out of it the game pauses --
+ * the frame clock, the guest's clock, the renderer and the sound (main.cpp,
+ * unfocused_hold) -- and goes on where it was when it is back. */
 - (void)sceneDidBecomeActive:(UIScene*)scene { rsx_metal_backend_ios_set_active(1); }
 - (void)sceneWillResignActive:(UIScene*)scene { rsx_metal_backend_ios_set_active(0); }
+/* Into the background: not before the pause has taken hold, so no frame is
+ * sent to the GPU from there. The frame clock looks 20 times a second; a
+ * second at most, then iOS's own deadline is the limit. */
+- (void)sceneDidEnterBackground:(UIScene*)scene
+{
+    rsx_metal_backend_ios_set_active(0);
+    if (!s_game_running) return;
+    for (int i = 0; i < 100 && !dod3_ios_paused(); i++) usleep(10 * 1000);
+    fprintf(stderr, "[ios] in the background: %s\n", dod3_ios_paused() ? "paused" : "not paused after 1 s");
+    fflush(stderr);
+}
 @end
 
 @interface DOD3AppDelegate : UIResponder <UIApplicationDelegate>
@@ -270,6 +316,7 @@ extern "C" int dod3_ios_run(int argc, char** argv, int (*game_main)(int, char**)
     static char* game_argv[2] = { argc > 0 ? argv[0] : (char*)"dod3", NULL };
     s_argc = 1;
     s_argv = game_argv;
+    apply_diag_env();     /* the diagnostic build only: before anything reads dod3.ini */
     SDL_SetMainReady();   /* the pad and audio init SDL subsystems; this is our main, not SDL's */
     @autoreleasepool {
         return UIApplicationMain(argc, argv, nil, NSStringFromClass([DOD3AppDelegate class]));
