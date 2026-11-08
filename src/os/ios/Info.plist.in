@@ -7,8 +7,22 @@
     <key>CFBundleExecutable</key><string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
     <key>CFBundleIdentifier</key><string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-    <key>CFBundleName</key><string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+    <!-- the name under the icon (Home Screen, LiveContainer's list): 12
+         characters, the most a Home Screen shows without cutting it -->
+    <key>CFBundleName</key><string>Drakengard 3</string>
     <key>CFBundleDisplayName</key><string>Drakengard 3</string>
+    <!-- the icon: tools/make_icon.py's drawing (an original, no game art),
+         AppIcon60x60@2x.png and @3x.png beside the executable, which
+         tools/ios/package_ipa.sh puts there (no asset catalog: no Xcode) -->
+    <key>CFBundleIcons</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconFiles</key><array><string>AppIcon60x60</string></array>
+            <key>CFBundleIconName</key><string>AppIcon</string>
+            <key>UIPrerenderedIcon</key><true/>
+        </dict>
+    </dict>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
     <key>CFBundleVersion</key><string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>

@@ -18,6 +18,7 @@
 #import <Foundation/Foundation.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <UIKit/UIKit.h>
+#import <AVFoundation/AVFoundation.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -34,6 +35,113 @@ void rsx_metal_backend_ios_set_active(int active);
 void SDL_SetMainReady(void);                         /* SDL2: no SDL_main here */
 int dod3_ios_paused(void);                           /* main.cpp: the frame clock has stopped */
 void dod3_touch_install(void* view);                 /* touch_ios.mm */
+void dod3_ios_thermal(int state);                    /* main.cpp: the frame-rate cap by the phone's heat */
+extern volatile int g_audio_reopen;                  /* ps3recomp: cellAudio.c */
+}
+
+/* ---- why the game is held -------------------------------------------------
+ * The game runs only while nothing holds it: the scene out of the front, the
+ * touch controls' settings open, the audio session interrupted (a call, Siri,
+ * an alarm), or a pause the player ends with a tap (the headphones taken off,
+ * an interruption the system did not end with "resume"). Held, the frame
+ * clock stops, and the sound and the guest's clocks with it (main.cpp,
+ * unfocused_hold); let go, all go on where they were. Main thread. */
+enum { kHoldScene = 1, kHoldSettings = 2, kHoldInterrupted = 4, kHoldTap = 8 };
+static unsigned s_hold_bits;
+static __weak UIView* s_game_view;
+static UIView* s_tap_view;
+static void tap_pause_show(const char* why);
+extern "C" void dod3_ios_hold(unsigned bit, int on)
+{
+    const unsigned was = s_hold_bits;
+    s_hold_bits = on ? (s_hold_bits | bit) : (s_hold_bits & ~bit);
+    if (!was != !s_hold_bits) rsx_metal_backend_ios_set_active(s_hold_bits == 0);
+}
+
+/* The sound again after an interruption or a route change: the session
+ * active, and the mixer's device reopened on it (it does so before it plays
+ * on, so while held it waits for the hold to end). */
+static void audio_back(const char* why)
+{
+    NSError* err = nil;
+    const BOOL ok = [AVAudioSession.sharedInstance setActive:YES error:&err];
+    g_audio_reopen = 1;
+    fprintf(stderr, "[ios] audio: %s -- session active again%s%s\n", why, ok ? "" : ": ",
+            ok ? "" : err.localizedDescription.UTF8String);
+}
+
+@interface DOD3TapToContinue : UIView
+@end
+@implementation DOD3TapToContinue
+- (void)touchesEnded:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event
+{
+    [self removeFromSuperview];
+    s_tap_view = nil;
+    audio_back("tap to continue");
+    dod3_ios_hold(kHoldTap, 0);
+    fprintf(stderr, "[ios] continued by a tap\n");
+}
+@end
+
+static void tap_pause_show(const char* why)
+{
+    fprintf(stderr, "[ios] paused (%s): a tap continues\n", why);
+    dod3_ios_hold(kHoldTap, 1);
+    UIView* host = s_game_view;
+    if (s_tap_view || !host) return;
+    DOD3TapToContinue* v = [[DOD3TapToContinue alloc] initWithFrame:host.bounds];
+    v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    v.backgroundColor = [UIColor colorWithWhite:0 alpha:0.55];
+    UILabel* l = [[UILabel alloc] initWithFrame:v.bounds];
+    l.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    l.text = @"Paused\nTap to continue";
+    l.numberOfLines = 2;
+    l.textAlignment = NSTextAlignmentCenter;
+    l.textColor = UIColor.whiteColor;
+    l.font = [UIFont boldSystemFontOfSize:26];
+    [v addSubview:l];
+    [host addSubview:v];
+    s_tap_view = v;
+}
+
+/* AVAudioSession: interruptions and route changes. */
+static void audio_session_watch(void)
+{
+    NSNotificationCenter* nc = NSNotificationCenter.defaultCenter;
+    [nc addObserverForName:AVAudioSessionInterruptionNotification object:nil queue:NSOperationQueue.mainQueue
+                usingBlock:^(NSNotification* n) {
+        const NSUInteger type = [n.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
+        if (type == AVAudioSessionInterruptionTypeBegan) {
+            fprintf(stderr, "[ios] audio: interrupted (a call, Siri, an alarm...): paused\n");
+            dod3_ios_hold(kHoldInterrupted, 1);
+            return;
+        }
+        if (!(s_hold_bits & kHoldInterrupted)) return;
+        const NSUInteger opt = [n.userInfo[AVAudioSessionInterruptionOptionKey] unsignedIntegerValue];
+        const bool resume = opt & AVAudioSessionInterruptionOptionShouldResume;
+        audio_back(resume ? "the interruption ended" : "the interruption ended without \"resume\"");
+        dod3_ios_hold(kHoldInterrupted, 0);
+        if (!resume) tap_pause_show("an interruption the system did not resume");
+    }];
+    [nc addObserverForName:AVAudioSessionRouteChangeNotification object:nil queue:NSOperationQueue.mainQueue
+                usingBlock:^(NSNotification* n) {
+        const NSUInteger why = [n.userInfo[AVAudioSessionRouteChangeReasonKey] unsignedIntegerValue];
+        AVAudioSessionRouteDescription* r = AVAudioSession.sharedInstance.currentRoute;
+        NSString* to = r.outputs.firstObject.portName ?: @"none";
+        if (why == AVAudioSessionRouteChangeReasonOldDeviceUnavailable) {
+            /* headphones off: paused, as the system's own players do, so the
+             * sound does not burst out of the speaker */
+            fprintf(stderr, "[ios] audio: the output went away, now %s\n", to.UTF8String);
+            g_audio_reopen = 1;
+            if (s_game_view) tap_pause_show("the headphones went away");
+        } else if (why == AVAudioSessionRouteChangeReasonNewDeviceAvailable) {
+            fprintf(stderr, "[ios] audio: a new output, now %s: the sound moves to it\n", to.UTF8String);
+            g_audio_reopen = 1;
+        }
+    }];
+}
+
+extern "C" {
 }
 
 /* The data folder: the app's Documents (created by the system). */
@@ -275,6 +383,7 @@ static bool game_ready(void)
     _started = YES;
     s_game_running = true;
     [self.view layoutIfNeeded];
+    s_game_view = self.view;
     rsx_metal_backend_ios_attach((__bridge void*)self.view.layer);
     dod3_touch_install((__bridge void*)self.view);   /* the on-screen controls, over it */
     if (@available(iOS 15.0, *)) {
@@ -360,14 +469,25 @@ static bool game_ready(void)
 /* In front or not: the game's "window focus". Out of it the game pauses --
  * the frame clock, the guest's clock, the renderer and the sound (main.cpp,
  * unfocused_hold) -- and goes on where it was when it is back. */
-- (void)sceneDidBecomeActive:(UIScene*)scene { rsx_metal_backend_ios_set_active(1); }
-- (void)sceneWillResignActive:(UIScene*)scene { rsx_metal_backend_ios_set_active(0); }
+- (void)sceneDidBecomeActive:(UIScene*)scene
+{
+    if (s_hold_bits & kHoldInterrupted) {
+        /* back in front with no "interruption ended" from the system (a call
+         * taken, the app left meanwhile): the sound back, the player's tap
+         * to go on */
+        audio_back("back in front after an interruption");
+        dod3_ios_hold(kHoldInterrupted, 0);
+        tap_pause_show("back after an interruption");
+    }
+    dod3_ios_hold(kHoldScene, 0);
+}
+- (void)sceneWillResignActive:(UIScene*)scene { dod3_ios_hold(kHoldScene, 1); }
 /* Into the background: not before the pause has taken hold, so no frame is
  * sent to the GPU from there. The frame clock looks 20 times a second; a
  * second at most, then iOS's own deadline is the limit. */
 - (void)sceneDidEnterBackground:(UIScene*)scene
 {
-    rsx_metal_backend_ios_set_active(0);
+    dod3_ios_hold(kHoldScene, 1);
     if (!s_game_running) return;
     for (int i = 0; i < 100 && !dod3_ios_paused(); i++) usleep(10 * 1000);
     fprintf(stderr, "[ios] in the background: %s\n", dod3_ios_paused() ? "paused" : "not paused after 1 s");
@@ -408,12 +528,14 @@ extern "C" int dod3_ios_run(int argc, char** argv, int (*game_main)(int, char**)
         const long t = (long)pi.thermalState;
         fprintf(stderr, "[ios] %s: thermal state %s, Low Power Mode %s\n", why,
                 t >= 0 && t < 4 ? kThermal[t] : "?", pi.lowPowerModeEnabled ? "on" : "off");
+        dod3_ios_thermal((int)t);   /* the frame clock logs and applies the cap */
     };
     for (NSNotificationName n in @[ NSProcessInfoThermalStateDidChangeNotification,
                                     NSProcessInfoPowerStateDidChangeNotification ])
         [NSNotificationCenter.defaultCenter addObserverForName:n object:nil queue:nil
                                                     usingBlock:^(NSNotification*) { say_power("now"); }];
     s_say_power_at_log = [=] { say_power("at the start"); };
+    audio_session_watch();
     @autoreleasepool {
         return UIApplicationMain(argc, argv, nil, NSStringFromClass([DOD3AppDelegate class]));
     }

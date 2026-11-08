@@ -27,7 +27,8 @@ struct Config {
     float opacity = 0.45f;   /* of a button at rest */
     float size = 1.0f;       /* every button's and the stick's */
     float camera = 1.0f;     /* the swipe's turn per point */
-    bool haptics = true;
+    bool haptics = true;     /* a tick on a button's press */
+    bool rumble = true;      /* the game's rumble as the phone's vibration */
     float x[kButtons], y[kButtons], scale[kButtons];   /* in the safe area, 0..1; each button's own size */
     Config();
     void reset_layout();

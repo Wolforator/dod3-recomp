@@ -39,6 +39,22 @@ if [ -n "$DIAG" ]; then
     printf '%s\n' "# the diagnostic build's settings, over dod3.ini" \
         RSX_PASS_PROF=60 RSX_WAIT_STATS=1 RSX_QUERY_ASYNC=alternate > "$a/defaults/diag.env"
 fi
+# The icon (Info.plist's CFBundleIcons): tools/make_icon.py's drawing at
+# 1024 px with Pillow, else the 256 px one already in src/res/app.ico; the
+# iPhone's 120 and 180 px from it, on the drawing's dark ground (iOS shows a
+# transparent corner as black, and rounds the corners itself).
+icon_src=$(mktemp -d)/icon.png
+if ! "${PYTHON:-python3}" -c "import sys; sys.path.insert(0, 'tools'); import make_icon; make_icon.render().save(sys.argv[1])" \
+        "$icon_src" 2>/dev/null; then
+    python3 -I tools/ios/ico_png.py src/res/app.ico "$icon_src"
+fi
+# the drawing's square is 976 of its 1024 px: cropped to it, iOS's own
+# rounding (a little wider than the drawing's) leaves no transparent edge
+w=$(sips -g pixelWidth "$icon_src" | awk '/pixelWidth/ {print $2}')
+c=$((w * 976 / 1024))
+sips --cropToHeightWidth $c $c "$icon_src" > /dev/null
+sips -s format png -z 120 120 "$icon_src" --out "$a/AppIcon60x60@2x.png" > /dev/null
+sips -s format png -z 180 180 "$icon_src" --out "$a/AppIcon60x60@3x.png" > /dev/null
 # Refuse anything of the game's (the release scripts do the same).
 if find "$a" \( -iname '*.ELF' -o -iname 'EBOOT*' -o -iname '*.prx' -o -iname '*.sprx' -o -iname '*.pkg' \) | grep -q .; then
     echo "package_ipa: game or firmware files in the app; refusing"; exit 1

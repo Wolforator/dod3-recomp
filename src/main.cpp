@@ -557,9 +557,30 @@ static std::atomic<unsigned> s_fps_gen{ 0 };
 #if defined(__APPLE__) && TARGET_OS_IPHONE
 extern "C" void rsx_metal_backend_set_min_frame_interval(double seconds);   /* the 120 Hz screen's pacing */
 #endif
+/* iOS, the phone's heat (src/os/ios/setup_ios.mm, ProcessInfo.thermalState):
+ * from "serious" the cap is held at 40 at most, from "critical" at 30, and
+ * back to the setting at "fair" or "nominal" -- iOS lowers the clocks from
+ * "serious" on, and a lower cap is less heat for the same even pacing. The
+ * setting (DOD3_FPS, the Graphics Settings page) is left as it is. */
+static std::atomic<int> s_thermal_cap{ 0 }, s_thermal_state{ 0 };
+static int s_thermal_applied;
+extern "C" void dod3_ios_thermal(int state)   /* 0 nominal .. 3 critical; any thread */
+{
+    s_thermal_state = state;
+    s_thermal_cap = state >= 3 ? 30 : state == 2 ? 40 : 0;
+}
 static void apply_fps_unlock(void)
 {
     const char* e = getenv("DOD3_FPS");
+    std::string thermal_fps;
+    if (const int tc = s_thermal_cap.load(); tc && e && *e) {
+        const bool none = !strcmp(e, "adaptive") || !strcmp(e, "uncapped") || !strcmp(e, "0");
+        if (none || atoi(e) > tc) {
+            thermal_fps = std::to_string(tc);
+            e = thermal_fps.c_str();
+        }
+    }
+    s_thermal_applied = s_thermal_cap.load();
 #if defined(__APPLE__) && TARGET_OS_IPHONE
     {   /* each frame up at least the cap's interval: the title's own scheme is
          * 30, a number is itself, uncapped and adaptive are none */
@@ -671,6 +692,25 @@ static void render_tick_poll(uint64_t now)
 
 /* src/ui/settings_menu.cpp, after it sets DOD3_FPS. */
 void dod3_fps_reload() { apply_fps_unlock(); }
+
+/* The frame clock, 20 times a second: a change of the phone's heat cap. */
+static void thermal_poll(uint64_t now)
+{
+    static uint64_t next;
+    if (now < next) return;
+    next = now + 50000;
+    const int tc = s_thermal_cap.load();
+    if (tc == s_thermal_applied) return;
+    static const char* const kState[] = { "nominal", "fair", "serious", "critical" };
+    const int st = s_thermal_state.load();
+    const char* e = getenv("DOD3_FPS");
+    if (tc)
+        fprintf(stderr, "[thermal] %s: frame rate held at %d at most (the setting: %s)\n", kState[st & 3], tc,
+                e && *e ? e : "the title's own 30");
+    else
+        fprintf(stderr, "[thermal] %s: frame rate back to the setting (%s)\n", kState[st & 3], e && *e ? e : "the title's own 30");
+    apply_fps_unlock();
+}
 
 /* DOD3_UNFOCUSED: what the game does while its window is in the background.
  * Unset, it keeps running. "mute": the audio plays as silence. "pause": the
@@ -1589,6 +1629,7 @@ static DWORD WINAPI frame_clock(LPVOID)
         dod3_sysset_poll();
         dod3_prompts_poll();
         render_tick_poll(now);
+        thermal_poll(now);
         if (s_fps_gen.load() != vblank_gen) {
             vblank_gen = s_fps_gen.load();
             vblank_us = vblank_period();

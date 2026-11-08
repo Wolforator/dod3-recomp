@@ -356,6 +356,7 @@ bool Pad::load(const std::string& path)
         else if (!strcmp(k, "size") && sscanf(v, "%f", &a) == 1) cfg.size = a < 0.5f ? 0.5f : a > 2 ? 2 : a;
         else if (!strcmp(k, "camera") && sscanf(v, "%f", &a) == 1) cfg.camera = a < 0.1f ? 0.1f : a > 5 ? 5 : a;
         else if (!strcmp(k, "haptics") && sscanf(v, "%f", &a) == 1) cfg.haptics = a != 0;
+        else if (!strcmp(k, "rumble") && sscanf(v, "%f", &a) == 1) cfg.rumble = a != 0;
         else for (int i = 0; i < kButtons; i++)
             if (!strcmp(k, kDef[i].key) && sscanf(v, "%f %f %f", &a, &b, &c) == 3) {
                 cfg.x[i] = a < 0 ? 0 : a > 1 ? 1 : a;
@@ -373,11 +374,12 @@ bool Pad::save(const std::string& path) const
     FILE* f = fopen(tmp.c_str(), "w");
     if (!f) return false;
     fprintf(f, "# Drakengard 3 Recompiled: the touch controls (the gear at the top of the screen)\n"
-               "# opacity 0.05-1, size 0.5-2, camera (the swipe's speed) 0.1-5, haptics 0/1;\n"
+               "# opacity 0.05-1, size 0.5-2, camera (the swipe's speed) 0.1-5, haptics (a tick on a\n"
+               "# press) 0/1, rumble (the game's, as the phone's vibration) 0/1;\n"
                "# each button: x y (0-1 across and down the safe area) and its own scale.\n"
                "# Delete the file for the defaults.\n");
-    fprintf(f, "opacity = %.2f\nsize = %.2f\ncamera = %.2f\nhaptics = %d\n", cfg.opacity, cfg.size, cfg.camera,
-            cfg.haptics ? 1 : 0);
+    fprintf(f, "opacity = %.2f\nsize = %.2f\ncamera = %.2f\nhaptics = %d\nrumble = %d\n", cfg.opacity, cfg.size,
+            cfg.camera, cfg.haptics ? 1 : 0, cfg.rumble ? 1 : 0);
     for (int i = 0; i < kButtons; i++)
         fprintf(f, "%s = %.4f %.4f %.2f\n", kDef[i].key, cfg.x[i], cfg.y[i], cfg.scale[i]);
     fclose(f);

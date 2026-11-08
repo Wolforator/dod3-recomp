@@ -23,7 +23,8 @@
  * swipe home (setup_ios.mm).
  *
  * The gear at the top opens the settings: opacity, size, the camera swipe's
- * speed, vibration on a press, and the layout editor (drag a button; a
+ * speed, vibration on a press, the game's rumble as the phone's vibration
+ * (a real pad gets it on its own motors), and the layout editor (drag a button; a
  * second finger anywhere pinches its size; Reset for the defaults). The game
  * is paused meanwhile. Saved to Documents/touch_controls.ini.
  *
@@ -49,8 +50,10 @@ typedef struct CellPadHostInput {
 } CellPadHostInput;
 typedef int (*cellPad_host_input_fn)(void* user, int focused, CellPadHostInput* out);
 void cellPad_set_host_input(cellPad_host_input_fn fn, void* user);
+typedef void (*cellPad_rumble_hook_fn)(uint32_t port, int small_on, int large);
+void cellPad_set_rumble_hook(cellPad_rumble_hook_fn fn);
 int cellPad_host_kind(uint32_t port);
-void rsx_metal_backend_ios_set_active(int active);
+void dod3_ios_hold(unsigned bit, int on);   /* setup_ios.mm: 2, the settings */
 const char* dod3_mac_data_dir(void);   /* setup_ios.mm */
 }
 
@@ -76,6 +79,32 @@ static int touch_host_input(void* user, int focused, CellPadHostInput* in)
     in->l2 = (o.buttons & (1 << 8)) ? 255 : 0;
     in->r2 = (o.buttons & (1 << 9)) ? 255 : 0;
     return o.active;
+}
+
+/* The game's rumble on the phone, while the touch screen is the pad (a real
+ * pad in use has its own motors: cellPad sends it there through SDL). The
+ * title sets its motors and leaves them, so a vibration marks a rise -- off
+ * to on, or a much stronger level -- and repeats every 0.3 s while they stay
+ * on: short taps, not a buzz. On the title's thread; the taps on the main
+ * one. */
+static void touch_rumble(uint32_t port, int small_on, int large)
+{
+    static int was;
+    static double last;
+    if (port != 0) return;
+    const int level = small_on ? 255 : large;
+    const double t = now_s();
+    const bool rise = level > 40 && level > was + 60;
+    const bool again = level > 40 && t - last > 0.3;
+    was = level;
+    if (!(rise || again) || !s_pad.cfg.rumble || cellPad_host_kind(0) != 0) return;
+    last = t;
+    const CGFloat k = level / 255.0;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        static UIImpactFeedbackGenerator* g;
+        if (!g) g = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy];
+        [g impactOccurredWithIntensity:0.35 + 0.65 * k];
+    });
 }
 
 /* ---- the view ---- */
@@ -247,7 +276,7 @@ static int touch_host_input(void* user, int focused, CellPadHostInput* in)
 {
     if (_settings) return;
     s_pad.cancel_all();
-    rsx_metal_backend_ios_set_active(0);   /* the game waits */
+    dod3_ios_hold(2, 1);   /* the game waits */
     DOD3TouchSettings* s = [[DOD3TouchSettings alloc] initWithFrame:self.bounds];
     s.owner = self;
     [self addSubview:s];
@@ -260,7 +289,7 @@ static int touch_host_input(void* user, int focused, CellPadHostInput* in)
     [_settings removeFromSuperview];
     _settings = nil;
     s_pad.save(settings_path());
-    if (!s_pad.editing) rsx_metal_backend_ios_set_active(1);
+    if (!s_pad.editing) dod3_ios_hold(2, 0);
     [self refresh];
 }
 
@@ -323,7 +352,7 @@ static int touch_host_input(void* user, int focused, CellPadHostInput* in)
     s_pad.editing = false;
     s_pad.edit_selected = touchpad::kNone;
     s_pad.save(settings_path());
-    rsx_metal_backend_ios_set_active(1);
+    dod3_ios_hold(2, 0);
     [self refresh];
 }
 @end
@@ -357,6 +386,10 @@ static int touch_host_input(void* user, int focused, CellPadHostInput* in)
     sw.on = s_pad.cfg.haptics;
     [sw addTarget:self action:@selector(haptics:) forControlEvents:UIControlEventValueChanged];
     [st addArrangedSubview:[self row:@"Vibration on press" control:sw value:nil]];
+    UISwitch* rs = [[UISwitch alloc] init];
+    rs.on = s_pad.cfg.rumble;
+    [rs addTarget:self action:@selector(rumble:) forControlEvents:UIControlEventValueChanged];
+    [st addArrangedSubview:[self row:@"Game rumble" control:rs value:nil]];
     UIStackView* buttons = [[UIStackView alloc] initWithArrangedSubviews:@[
         [self button:@"Edit layout" action:@selector(edit)],
         [self button:@"Reset layout" action:@selector(reset)],
@@ -430,6 +463,7 @@ static int touch_host_input(void* user, int focused, CellPadHostInput* in)
     [self.owner refresh];
 }
 - (void)haptics:(UISwitch*)sw { s_pad.cfg.haptics = sw.on; }
+- (void)rumble:(UISwitch*)sw { s_pad.cfg.rumble = sw.on; }
 - (void)edit { [self.owner startEditing]; }
 - (void)reset { s_pad.cfg.reset_layout(); [self.owner refresh]; }
 - (void)close { [self.owner closeSettings]; }
@@ -448,10 +482,11 @@ extern "C" void dod3_touch_install(void* view)
     touchpad::g_camera_motion = dod3_camera_touch_motion;
     touchpad::g_camera_bridge_live = dod3_camera_bridge_live;
     cellPad_set_host_input(touch_host_input, nullptr);
+    cellPad_set_rumble_hook(touch_rumble);
     UIView* host = (__bridge UIView*)view;
     DOD3TouchView* v = [[DOD3TouchView alloc] initWithFrame:host.bounds];
     [host addSubview:v];
-    fprintf(stderr, "[touch] on-screen controls: %s (opacity %.2f, size %.2f, camera %.2f, vibration %s)\n",
+    fprintf(stderr, "[touch] on-screen controls: %s (opacity %.2f, size %.2f, camera %.2f, vibration %s, rumble %s)\n",
             loaded ? path.c_str() : "the default layout", s_pad.cfg.opacity, s_pad.cfg.size, s_pad.cfg.camera,
-            s_pad.cfg.haptics ? "on" : "off");
+            s_pad.cfg.haptics ? "on" : "off", s_pad.cfg.rumble ? "on" : "off");
 }
