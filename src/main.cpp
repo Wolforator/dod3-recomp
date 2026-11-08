@@ -554,9 +554,19 @@ static int s_fps_adaptive;      /* with s_fps_lock 0: the cap follows the scene 
 /* Bumped by every change of the above, so the frame clock re-derives its
  * vblank period: the Graphics Settings page changes DOD3_FPS while running. */
 static std::atomic<unsigned> s_fps_gen{ 0 };
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+extern "C" void rsx_metal_backend_set_min_frame_interval(double seconds);   /* the 120 Hz screen's pacing */
+#endif
 static void apply_fps_unlock(void)
 {
     const char* e = getenv("DOD3_FPS");
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    {   /* each frame up at least the cap's interval: the title's own scheme is
+         * 30, a number is itself, uncapped and adaptive are none */
+        const int n = e && *e ? atoi(e) : 30;
+        rsx_metal_backend_set_min_frame_interval(n >= 10 ? 1.0 / n : 0.0);
+    }
+#endif
     if (!e || !*e) {
         if (s_fps_lock >= 0) fprintf(stderr, "[fps] the title's own frame rate\n");
         s_fps_lock = -1;

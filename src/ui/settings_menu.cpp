@@ -56,6 +56,9 @@
  * factor -- the tangent of the half-angle times tan((65+N)/2) / tan(65/2) --
  * so its default 65 degrees (horizontal) becomes 65+N and the game's own
  * zooms keep their proportion. Cutscene cameras are left alone. */
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 #include "cpu/ppu.h"
 #include "cpu/eboot.h"       /* the EBOOT version's addresses */
 #include "cpu/uscript.h"     /* the script VM, for the two thunks */
@@ -440,6 +443,11 @@ void build_rows(std::vector<Dod3RowSpec>& rows)
                      "Frame Rate",
                      "The frame rate limit. 60 is recommended.",
                      { { NULL, "30 (Original)" },
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+                       /* every third refresh of a 120 Hz screen: smoother
+                        * than 30, lighter than 60 */
+                       { "40", "40" },
+#endif
                        { "60", "60" },
                        { "120", "120" },
                        { "adaptive", "Adaptive" },
@@ -831,6 +839,20 @@ int bridge(int cmd, int a, int b)
             want = wa > 0.0f ? aspect_ok(wa) : 0.0f;
         }
         s_aspect_now = s_aspect_from > 0.0f ? want : 0.0f;
+        {   /* the view's size in the log as it changes: the targets stay
+             * 16:9 (1280x720 game pixels times the Resolution) and a wider
+             * view uses fewer of their lines, a narrower one fewer columns */
+            static float said = -1.0f;
+            if (s_aspect_now != said) {
+                said = s_aspect_now;
+                const char* rs = getenv("RSX_SCALE");
+                const double k = rs && atof(rs) > 0.0 ? atof(rs) : 1.0;
+                const double a = s_aspect_now > 0.0f ? s_aspect_now : 16.0 / 9.0;
+                const double gw = a >= 16.0 / 9.0 ? 1280.0 : 720.0 * a, gh = a >= 16.0 / 9.0 ? 1280.0 / a : 720.0;
+                fprintf(stderr, "[aspect] the view %.3f:1 -- %.0fx%.0f game pixels, %.0fx%.0f at Resolution x%.2f, "
+                                "in %.0fx%.0f targets\n", a, gw, gh, gw * k, gh * k, k, 1280.0 * k, 720.0 * k);
+            }
+        }
         return s_aspect_now > 0.0f ? as_bits(s_aspect_now) : a;
     }
     case CMD_ASPECT_FOV: { /* the view's FOV (float bits) */

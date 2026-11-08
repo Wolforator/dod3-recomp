@@ -11,9 +11,10 @@
 #
 # --diag: the same app (bundle ID, Documents) with defaults/diag.env, which
 # the app sets in the environment over dod3.ini (src/os/ios/setup_ios.mm):
-# uncapped, the GPU's time per pass logged (RSX_PASS_PROF), 540p (RSX_SCALE 0.75),
-# the own-target copies once a frame and per draw by turns, 10 s each
-# (RSX_SNAP_REUSE=alternate: a before/after in the same scenes).
+# the phone's own settings (dod3.ini) with the GPU's time per pass
+# (RSX_PASS_PROF) and the walker's waits for the GPU (RSX_WAIT_STATS) logged,
+# the occlusion-query fence waited for and asynchronous by turns, 10 s each
+# (RSX_QUERY_ASYNC=alternate).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
@@ -29,10 +30,14 @@ rm -rf "$stage"; mkdir -p "$stage/Payload"
 cp -R "$app" "$stage/Payload/"
 a="$stage/Payload/dod3.app"
 mkdir -p "$a/defaults"
-cp dod3.ini "$a/defaults/dod3.ini"
+# The phone's preset (src/os/ios/preset.ini) set in the default dod3.ini (a new
+# install's), and on its own for an install whose dod3.ini predates it
+# (src/os/ios/setup_ios.mm sets it there once).
+awk -v preset=src/os/ios/preset.ini -f tools/ios/apply_preset.awk dod3.ini > "$a/defaults/dod3.ini"
+cp src/os/ios/preset.ini "$a/defaults/preset.ini"
 if [ -n "$DIAG" ]; then
     printf '%s\n' "# the diagnostic build's settings, over dod3.ini" \
-        DOD3_FPS=uncapped RSX_SCALE=0.75 RSX_PASS_PROF=60 RSX_SNAP_REUSE=alternate > "$a/defaults/diag.env"
+        RSX_PASS_PROF=60 RSX_WAIT_STATS=1 RSX_QUERY_ASYNC=alternate > "$a/defaults/diag.env"
 fi
 # Refuse anything of the game's (the release scripts do the same).
 if find "$a" \( -iname '*.ELF' -o -iname 'EBOOT*' -o -iname '*.prx' -o -iname '*.sprx' -o -iname '*.pkg' \) | grep -q .; then

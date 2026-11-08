@@ -22,8 +22,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <string>
+#include <algorithm>
 #include <atomic>
 #include <thread>
+#include <vector>
 #include <unistd.h>
 
 extern "C" {
@@ -67,6 +69,8 @@ extern "C" const char* dod3_mac_resources_dir(void)
  * before the game's main, so they win over dod3.ini. What it set is said at
  * the top of the log. The everyday .ipa has no such file. */
 static std::string s_diag_said;
+#include <functional>
+static std::function<void()> s_say_power_at_log;   /* dod3_ios_run's: once the log is open */
 
 static void apply_diag_env(void)
 {
@@ -99,10 +103,69 @@ extern "C" void dod3_mac_log_to_file(void)
     freopen("dod3.log", "a", stdout);
     if (!s_diag_said.empty())
         fprintf(stderr, "[ios] DIAGNOSTIC BUILD: set before dod3.ini, over it: %s\n", s_diag_said.c_str());
+    if (s_say_power_at_log) s_say_power_at_log();
     std::thread([] {
         pthread_setname_np("log flush");
         for (;;) { usleep(200 * 1000); fflush(stderr); fflush(stdout); }
     }).detach();
+}
+
+/* The phone's preset (defaults/preset.ini, src/os/ios/preset.ini) set in a
+ * dod3.ini made before it, once -- the preset's first line is its marker
+ * ("# ios preset <n>"): each of its keys set where the file sets it, the rest
+ * added at the end with the preset's comments, as tools/ios/apply_preset.awk
+ * does for a new install's. After that the Settings menu's changes stay. */
+static void apply_preset(const dod3setup::fs::path& ini)
+{
+    NSString* pp = [NSBundle.mainBundle pathForResource:@"preset" ofType:@"ini" inDirectory:@"defaults"];
+    if (!pp) return;
+    auto lines = [](const char* path) {
+        std::vector<std::string> v;
+        if (FILE* f = fopen(path, "r")) {
+            char b[1024];
+            while (fgets(b, sizeof b, f)) { std::string l(b); while (!l.empty() && (l.back() == '\n' || l.back() == '\r')) l.pop_back(); v.push_back(l); }
+            fclose(f);
+        }
+        return v;
+    };
+    const std::vector<std::string> preset = lines(pp.fileSystemRepresentation), have = lines(ini.c_str());
+    if (preset.empty() || have.empty()) return;
+    for (const std::string& l : have) if (l == preset[0]) return;   /* set before */
+    auto key_of = [](const std::string& l) -> std::string {
+        size_t a = l.find_first_not_of(" \t");
+        if (a == std::string::npos || l[a] == '#' || l[a] == ';') return "";
+        size_t eq = l.find('=', a);
+        if (eq == std::string::npos || eq == a) return "";
+        size_t e = l.find_last_not_of(" \t", eq - 1);
+        return e == std::string::npos || e < a ? "" : l.substr(a, e - a + 1);
+    };
+    std::vector<std::string> out;
+    std::vector<std::string> done;
+    int keys = 0;
+    for (const std::string& l : have) {
+        const std::string k = key_of(l);
+        const std::string* repl = nullptr;
+        if (!k.empty()) for (const std::string& p : preset) if (key_of(p) == k) repl = &p;
+        if (!repl) { out.push_back(l); continue; }
+        if (std::find(done.begin(), done.end(), k) != done.end()) continue;   /* a second line of it */
+        out.push_back(*repl);
+        done.push_back(k);
+        keys++;
+    }
+    out.push_back("");
+    for (const std::string& p : preset) {
+        const std::string k = key_of(p);
+        if (!k.empty() && std::find(done.begin(), done.end(), k) != done.end()) continue;
+        out.push_back(p);
+        keys += !k.empty();
+    }
+    const std::string tmp = ini.string() + ".new";
+    if (FILE* f = fopen(tmp.c_str(), "w")) {
+        for (const std::string& l : out) { fputs(l.c_str(), f); fputc('\n', f); }
+        fclose(f);
+        if (rename(tmp.c_str(), ini.c_str()) == 0)
+            fprintf(stderr, "[ios] the phone's preset set in %s (%d setting%s)\n", ini.c_str(), keys, keys == 1 ? "" : "s");
+    }
 }
 
 /* 0 to start the game: its files are in place under base_dir. Seeds the
@@ -119,6 +182,8 @@ extern "C" int dod3_setup_mac(const char* base_dir, int force)
         if (!fs::exists(base / "dod3.ini", ec)) {
             NSString* def = [NSBundle.mainBundle pathForResource:@"dod3" ofType:@"ini" inDirectory:@"defaults"];
             if (def) fs::copy_file(fs::path(def.fileSystemRepresentation), base / "dod3.ini", ec);
+        } else {
+            apply_preset(base / "dod3.ini");
         }
         const Status st = installed(base);
         if (!st.ready()) {
@@ -173,7 +238,13 @@ static bool game_ready(void)
 @implementation DOD3ViewController {
     UIView* _help;
     BOOL _started;
+    CADisplayLink* _hz;   /* keeps a ProMotion screen at 120 Hz while the game runs */
 }
+/* The display link does nothing but ask for the refresh rate. Without it iOS
+ * runs a CAMetalLayer that presents on its own at what it judges enough --
+ * 60 Hz -- and 40 fps (a frame up 25 ms) then waits for the second 60 Hz
+ * refresh: 30 fps. At 120 Hz 40 is every third refresh, 60 every second. */
+- (void)tick:(CADisplayLink*)link { (void)link; }
 - (void)loadView
 {
     DOD3MetalView* v = [[DOD3MetalView alloc] initWithFrame:UIScreen.mainScreen.bounds];
@@ -201,6 +272,11 @@ static bool game_ready(void)
     s_game_running = true;
     [self.view layoutIfNeeded];
     rsx_metal_backend_ios_attach((__bridge void*)self.view.layer);
+    if (@available(iOS 15.0, *)) {
+        _hz = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)];
+        _hz.preferredFrameRateRange = CAFrameRateRangeMake(80, 120, 120);
+        [_hz addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    }
     pthread_attr_t a;
     pthread_attr_init(&a);
     pthread_attr_setstacksize(&a, 16u << 20);   /* the frame clock runs guest vblank handlers */
@@ -318,6 +394,21 @@ extern "C" int dod3_ios_run(int argc, char** argv, int (*game_main)(int, char**)
     s_argv = game_argv;
     apply_diag_env();     /* the diagnostic build only: before anything reads dod3.ini */
     SDL_SetMainReady();   /* the pad and audio init SDL subsystems; this is our main, not SDL's */
+    /* The device's heat and Low Power Mode in the log, at the start and as
+     * they change: a GPU that takes twice as long in the same scene is the
+     * first thing they explain (iOS lowers the clocks from "serious" on). */
+    static const char* const kThermal[] = { "nominal", "fair", "serious", "critical" };
+    auto say_power = [](const char* why) {
+        NSProcessInfo* pi = NSProcessInfo.processInfo;
+        const long t = (long)pi.thermalState;
+        fprintf(stderr, "[ios] %s: thermal state %s, Low Power Mode %s\n", why,
+                t >= 0 && t < 4 ? kThermal[t] : "?", pi.lowPowerModeEnabled ? "on" : "off");
+    };
+    for (NSNotificationName n in @[ NSProcessInfoThermalStateDidChangeNotification,
+                                    NSProcessInfoPowerStateDidChangeNotification ])
+        [NSNotificationCenter.defaultCenter addObserverForName:n object:nil queue:nil
+                                                    usingBlock:^(NSNotification*) { say_power("now"); }];
+    s_say_power_at_log = [=] { say_power("at the start"); };
     @autoreleasepool {
         return UIApplicationMain(argc, argv, nil, NSStringFromClass([DOD3AppDelegate class]));
     }
