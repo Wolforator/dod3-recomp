@@ -33,6 +33,7 @@ void rsx_metal_backend_ios_attach(void* layer);      /* ps3recomp: rsx_metal_bac
 void rsx_metal_backend_ios_set_active(int active);
 void SDL_SetMainReady(void);                         /* SDL2: no SDL_main here */
 int dod3_ios_paused(void);                           /* main.cpp: the frame clock has stopped */
+void dod3_touch_install(void* view);                 /* touch_ios.mm */
 }
 
 /* The data folder: the app's Documents (created by the system). */
@@ -255,7 +256,10 @@ static bool game_ready(void)
 }
 - (BOOL)prefersStatusBarHidden { return YES; }
 - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
-- (UIRectEdge)preferredScreenEdgesDeferringSystemGestures { return UIRectEdgeAll; }
+/* Not the bottom: the swipe home stays the system's at the first try (the
+ * controls keep out of its strip, touch_ios.mm). The top's pull-down waits
+ * for a second swipe -- START and SELECT are up there. */
+- (UIRectEdge)preferredScreenEdgesDeferringSystemGestures { return UIRectEdgeTop | UIRectEdgeLeft | UIRectEdgeRight; }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskLandscape; }
 - (void)viewDidAppear:(BOOL)animated
 {
@@ -272,6 +276,7 @@ static bool game_ready(void)
     s_game_running = true;
     [self.view layoutIfNeeded];
     rsx_metal_backend_ios_attach((__bridge void*)self.view.layer);
+    dod3_touch_install((__bridge void*)self.view);   /* the on-screen controls, over it */
     if (@available(iOS 15.0, *)) {
         _hz = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)];
         _hz.preferredFrameRateRange = CAFrameRateRangeMake(80, 120, 120);

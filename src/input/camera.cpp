@@ -133,10 +133,26 @@ void init()
     s_mouse_test_file = getenv("DOD3_MOUSE_TEST_FILE");
 }
 
-/* The mouse's counts since the last call, and DOD3_MOUSE_TEST_FILE's. */
+/* The touch screen's camera swipe (iOS, src/input/touch_pad.cpp), in mouse
+ * counts not yet taken; the fractions stay for the next frame. */
+std::atomic<int64_t> s_touch_x{ 0 }, s_touch_y{ 0 };   /* 1/256 counts */
+const float kTouchCountsPerPoint = 4.0f;   /* a swipe across an iPhone's width: about 160 degrees */
+
+/* The mouse's counts since the last call, the touch screen's, and
+ * DOD3_MOUSE_TEST_FILE's. */
 void take_mouse(int* dx, int* dy)
 {
     rsx_host_mouse_take_motion(dx, dy);
+    for (int k = 0; k < 2; k++) {
+        std::atomic<int64_t>& a = k ? s_touch_y : s_touch_x;
+        int64_t v = a.load(std::memory_order_relaxed);
+        if (!v) continue;
+        const int64_t whole = v / 256;   /* towards zero: the rest stays */
+        if (whole) {
+            a.fetch_sub(whole * 256, std::memory_order_relaxed);
+            *(k ? dy : dx) += (int)whole;
+        }
+    }
     if (!s_mouse_test_file) return;
     int a[2] = { 0, 0 };
     if (FILE* f = fopen(s_mouse_test_file, "r")) {
@@ -255,3 +271,15 @@ void dod3_camera_view(int pitch, int yaw, int gameplay)
 unsigned long long dod3_camera_mouse_time() { return s_mouse_time.load(std::memory_order_relaxed); }
 
 void dod3_camera_reload() { read_sensitivity(); }
+
+void dod3_camera_touch_motion(float dx, float dy)
+{
+    s_touch_x.fetch_add((int64_t)lrintf(dx * kTouchCountsPerPoint * 256.0f), std::memory_order_relaxed);
+    s_touch_y.fetch_add((int64_t)lrintf(dy * kTouchCountsPerPoint * 256.0f), std::memory_order_relaxed);
+}
+
+bool dod3_camera_bridge_live()
+{
+    /* SendOrder ran within the last few frames, and the view is the mouse's */
+    return s_mouse && s_frame_time && dod3_now_us() - s_frame_time < 150000;
+}

@@ -21,3 +21,10 @@ void dod3_camera_reload();
  * went past the screen's edge. */
 bool dod3_camera_cursor_motion(float* dx, float* dy);
 void dod3_camera_cursor_spill(float dx, float dy);
+
+/* The touch screen's camera swipe (iOS), in points: turned like the mouse's
+ * motion, into the view or the dragon's cursor. Any thread. */
+void dod3_camera_touch_motion(float dx, float dy);
+/* Is the game asking for the camera's stick now (gameplay, not a menu or a
+ * cutscene), so a swipe given to dod3_camera_touch_motion turns the view? */
+bool dod3_camera_bridge_live();

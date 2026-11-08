@@ -285,9 +285,14 @@ if(WIN32)
 elseif(DOD3_IOS)
     # The data folder (the app's Documents), the log file and the app's
     # start: the counterpart of os/macos/setup_mac.mm.
+    # The on-screen controls: touch_ios.mm the view, src/input/touch_pad.cpp
+    # the model behind it.
     list(APPEND PORT_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/os/ios/setup_ios.mm"
+                                 "${CMAKE_CURRENT_SOURCE_DIR}/src/os/ios/touch_ios.mm"
+                                 "${CMAKE_CURRENT_SOURCE_DIR}/src/input/touch_pad.cpp"
                                  "${CMAKE_CURRENT_SOURCE_DIR}/src/os/macos/prof_mac.cpp")
     set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/os/ios/setup_ios.mm"
+                                "${CMAKE_CURRENT_SOURCE_DIR}/src/os/ios/touch_ios.mm"
         PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 elseif(APPLE)
     # What main.cpp needs from AppKit (the data folder, the log file, Option
