@@ -1,4 +1,4 @@
 [submodule "ps3recomp"]
 	path = ps3recomp
-	url = https://github.com/soyjxck/ps3recomp.git
-	branch = master
+	url = https://github.com/Wolforator/ps3recomp.git
+	branch = ios-port
