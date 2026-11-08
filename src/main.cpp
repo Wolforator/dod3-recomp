@@ -88,6 +88,13 @@ const char* dod3_mac_resources_dir(void);
 void dod3_mac_log_to_file(void);
 int dod3_setup_mac(const char* base_dir, int force);
 }
+#include <TargetConditionals.h>
+#include "ps3emu/host_stack.h"          /* PS3_HOST_STACK: the guest thread's, smaller on iOS */
+#if TARGET_OS_IPHONE
+/* src/os/ios/setup_ios.mm: UIKit owns the main thread; the game's main
+ * (dod3_main below) runs on a thread of its own once the app's view is up. */
+extern "C" int dod3_ios_run(int argc, char** argv, int (*game_main)(int, char**));
+#endif
 #endif
 #ifdef __linux__
 #include <SDL2/SDL.h>                     /* the message box when the game cannot load */
@@ -1986,7 +1993,13 @@ static std::vector<std::filesystem::path> cli_paths(int argc, char** argv, int f
     return out;
 }
 
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+static int dod3_main(int argc, char** argv);
+int main(int argc, char** argv) { return dod3_ios_run(argc, argv, dod3_main); }
+static int dod3_main(int argc, char** argv)
+#else
 int main(int argc, char** argv)
+#endif
 {
     dod3_boot_mark("main");
 #ifdef _WIN32
@@ -2395,11 +2408,13 @@ int main(int argc, char** argv)
      * spins on GCM get forever. So on Apple the roles swap: the guest runs on
      * a thread with the same 256 MB host stack guest PPU threads get, and the
      * frame clock owns the main thread. A guest exit ends the process from
-     * its own thread. */
+     * its own thread. On iOS this is not the main thread but the game thread
+     * src/os/ios/setup_ios.mm starts (UIApplicationMain has the main one, and
+     * drains the main queue), and the guest's stack is PS3_HOST_STACK's. */
     s_boot_entry = entry;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 256u * 1024 * 1024);
+    pthread_attr_setstacksize(&attr, PS3_HOST_STACK(256u * 1024 * 1024));
     pthread_t guest;
     if (pthread_create(&guest, &attr, guest_main, NULL) != 0) {
         fprintf(stderr, "ERROR: could not start the guest thread\n");
